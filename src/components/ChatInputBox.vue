@@ -1,5 +1,6 @@
 <template>
   <div :class="containerClass">
+
     <div class="bg-gray-100 rounded-3xl px-4 py-3 mx-4 border border-gray-200 flex flex-col">
         <textarea placeholder="给小哈 AI 机器人发送消息"
             class="bg-transparent border-none outline-none w-full text-sm resize-none min-h-[24px]" rows="2"
@@ -229,4 +230,5 @@ const handleEnter = (event) => {
   // 主动调用发送消息方法
   handleSendMessage()
 }
+
 </script>
