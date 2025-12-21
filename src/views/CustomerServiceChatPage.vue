@@ -94,7 +94,7 @@
             ref="fileInput" 
             @change="handleFileSelect" 
             class="hidden"
-            accept=".md,.markdown,text/markdown"
+            accept=".md,.markdown,text/markdown,.mp4,.mov,.avi"
           />
 
           <a-table :dataSource="dataSource" :columns="columns" :pagination="pagination" @change="handleTableChange" :loading="loading">
@@ -177,7 +177,33 @@
           </a-form-item>
         </a-form>
       </a-modal>
-      
+      <!-- 上传文件模态框 -->
+      <a-modal v-model:open="uploadFileInfoModelOpen" width="700px" :centered=true title="文件上传" :footer="null">
+        <div class="mt-5"></div>
+        <!-- 文件信息 -->
+        <a-descriptions :column="1">
+          <a-descriptions-item label="文件名">{{ selectedFile.name }}</a-descriptions-item>
+          <a-descriptions-item label="文件大小">{{ filesize(selectedFile.size) }}</a-descriptions-item>
+          <a-descriptions-item label="文件 MD5">
+            <a-tag v-if="fileMd5" color="blue">{{ fileMd5 }}</a-tag>
+            <div v-else>
+              <a-spin size="small" /> 计算中...
+            </div>
+          </a-descriptions-item>
+        </a-descriptions>
+
+              <!-- 上传按钮 -->
+              <a-button
+                type="primary"
+                size="large"
+                block
+              >
+                <template #icon>
+                  <upload-outlined />
+                </template>
+                开始上传
+              </a-button>
+      </a-modal>
       <!-- 删除 Markdown 问答文件确认框 -->
       <a-modal v-model:open="deleteMarkdownModelOpen" width="400px" :centered=true title="永久删除问答文件" ok-text="确认" ok-type="danger" cancel-text="取消"
       @ok="handleDeleteMarkdownModelOk()">
@@ -196,6 +222,7 @@ import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { UploadOutlined, SearchOutlined, RedoOutlined } from '@ant-design/icons-vue'
 import { findMarkdownFilePageList, uploadMarkdownFile, deleteMarkdownFile,updateMarkdownFile  } from '@/api/customerService'
 import { message } from 'ant-design-vue'
+import { filesize } from 'filesize'
 
 console.log('首页传递过来的消息: ', history.state?.firstMessage)
 
@@ -436,36 +463,44 @@ const triggerFileUpload = () => {
 
 // 上传文件按钮 Loading 动画
 const uploadBtnLoading = ref(false)
-
+// 是否展示上传文件模态框
+const uploadFileInfoModelOpen = ref(false)
+// 上传的文件
+const selectedFile = ref(null)
 // 处理文件选择
 const handleFileSelect = (event) => {
   const file = event.target.files[0]
+  // 保存上传的文件
+  selectedFile.value = file
   if (file) {
     console.log('已选择 Markdown 文件:', file.name)
+    uploadFileInfoModelOpen.value = true
+    message.info("开始计算文件 MD5，请稍候...")
+    // 计算文件 MD5
+    calculateMD5(file)
+    // // 表单对象
+    // let formData = new FormData()
+    // // 添加 file 字段，并将文件传入 
+    // formData.append('file', file)
 
-    // 表单对象
-    let formData = new FormData()
-    // 添加 file 字段，并将文件传入 
-    formData.append('file', file)
+    // // 显示上传按钮的 Loading 动画
+    // uploadBtnLoading.value = true
 
-    // 显示上传按钮的 Loading 动画
-    uploadBtnLoading.value = true
+    // uploadMarkdownFile(formData).then((res) => {
+    //     // 响参失败，提示错误消息
+    //     if (!res.data.success) {
+    //       message.warning(res.data.message)
+    //       return
+    //     }
 
-    uploadMarkdownFile(formData).then((res) => {
-        // 响参失败，提示错误消息
-        if (!res.data.success) {
-          message.warning(res.data.message)
-          return
-        }
+    //     message.success('上传成功')
 
-        message.success('上传成功')
-
-        // 重新渲染列表数据
-        renderTableData(1, pageSize.value)
-    }).finally(() => {
-      // 隐藏上传按钮的 Loading 动画
-      uploadBtnLoading.value = false
-    })
+    //     // 重新渲染列表数据
+    //     renderTableData(1, pageSize.value)
+    // }).finally(() => {
+    //   // 隐藏上传按钮的 Loading 动画
+    //   uploadBtnLoading.value = false
+    // })
   }
 }
 
@@ -551,6 +586,59 @@ const handleEditMarkdownModelOk = () => {
         // 重新渲染列表数据
         renderTableData(current.value, pageSize.value)
   })
+}
+// 文件 MD5
+const fileMd5 = ref('')
+// 分片大小
+const CHUNK_SIZE = 2 * 1024 * 1024 // 2MB 每分片
+
+// 计算文件 MD5
+const calculateMD5 = (file) => {
+  // 创建 SparkMD5.ArrayBuffer 对象，用于计算 MD5
+  const spark = new SparkMD5.ArrayBuffer()
+
+  // 创建 FileReader 对象，用于读取文件
+  const fileReader = new FileReader()
+
+  // 计算分片数
+  const chunks = Math.ceil(file.size / CHUNK_SIZE)
+
+  // 当前读取的分片，从0开始
+  let currentChunk = 0
+  
+  // 设置 FileReader 的 onload 事件处理函数，当读取完一片数据时触发
+  fileReader.onload = (e) => {
+    // 将读取到的 ArrayBuffer 数据追加到 spark 对象中，用于计算 MD5
+    spark.append(e.target.result)
+    // 当前分片索引 +1
+    currentChunk++
+    
+    // 如果分片数还没读取完毕，继续读取下一片
+    if (currentChunk < chunks) {
+      loadNext()
+    } else { // 所有分片读取完毕后，计算最终的 MD5 并存储到 fileMd5 变量中
+      fileMd5.value = spark.end()
+      message.success('MD5计算完成')
+    }
+  }
+  
+  // 设置 FileReader 的 onerror 事件处理函数，当读取出错时触发
+  fileReader.onerror = () => {
+    message.error('MD5计算失败')
+  }
+  
+  // 定义 loadNext 方法，用于读取下一分片的数据
+  const loadNext = () => {
+    // 计算当前分片的起始位置
+    const start = currentChunk * CHUNK_SIZE
+    // 计算当前分片的结束位置（取最小值，避免最后一片超过文件大小）
+    const end = Math.min(start + CHUNK_SIZE, file.size)
+    // 读取当前分片的数据，读取结果为 ArrayBuffer
+    fileReader.readAsArrayBuffer(file.slice(start, end))
+  }
+  
+  // 开始读取第一分片的数据
+  loadNext()
 }
 
 </script>
