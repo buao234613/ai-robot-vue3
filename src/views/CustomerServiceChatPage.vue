@@ -108,10 +108,11 @@
               </template>
               <template v-else-if="column.key === 'status'">
                 <span>
-                  <a-tag color="default" v-if="record.status === 0">待处理</a-tag>
-                  <a-tag color="processing" v-else-if="record.status === 1">向量化中</a-tag>
-                  <a-tag color="success" v-else-if="record.status === 2">已完成</a-tag>
-                  <a-tag color="error" v-else-if="record.status === 3">失败</a-tag>
+                  <a-tag color="default" v-if="record.status === 0">上传中</a-tag>
+                  <a-tag color="processing" v-else-if="record.status === 1">待处理</a-tag>
+                  <a-tag color="processing" v-else-if="record.status === 2">向量化中</a-tag>
+                  <a-tag color="success" v-else-if="record.status === 3">已完成</a-tag>
+                  <a-tag color="error" v-else-if="record.status === 4">失败</a-tag>
                 </span>
               </template>
             </template>
@@ -191,17 +192,36 @@
             </div>
           </a-descriptions-item>
         </a-descriptions>
-
+          <!-- 上传进度 -->
+        <a-card v-if="uploading || uploadProgress > 0" size="small" title="上传进度">
+          <a-progress
+            :percent="uploadProgress"
+            :status="uploadStatus"
+            :stroke-color="{
+              '0%': '#108ee9',
+              '100%': '#87d068',
+            }"
+          />
+          <a-alert
+            :message="statusText"
+            :type="alertType"
+            show-icon
+            style="margin-top: 16px"
+          />
+        </a-card>
+        <div class="mt-5"></div>
               <!-- 上传按钮 -->
               <a-button
+                v-if="selectedFile && fileMd5"
                 type="primary"
                 size="large"
                 block
+                @click="startUpload"
               >
                 <template #icon>
                   <upload-outlined />
                 </template>
-                开始上传
+                {{ uploading ? '上传中...' : '开始上传' }}
               </a-button>
       </a-modal>
       <!-- 删除 Markdown 问答文件确认框 -->
@@ -220,7 +240,7 @@ import ChatInputBox from '@/components/ChatInputBox.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { UploadOutlined, SearchOutlined, RedoOutlined } from '@ant-design/icons-vue'
-import { findMarkdownFilePageList, uploadMarkdownFile, deleteMarkdownFile,updateMarkdownFile  } from '@/api/customerService'
+import { findMarkdownFilePageList, uploadMarkdownFile, deleteMarkdownFile,updateMarkdownFile,uploadFileChunk,mergeFileChunk  } from '@/api/customerService'
 import { message } from 'ant-design-vue'
 import { filesize } from 'filesize'
 
@@ -473,35 +493,20 @@ const handleFileSelect = (event) => {
   // 保存上传的文件
   selectedFile.value = file
   if (file) {
-    console.log('已选择 Markdown 文件:', file.name)
+    console.log('已选择文件:', file.name)
+    // 重置上传进度
+    uploadProgress.value = 0
+    uploadStatus.value = 'active'
+    statusText.value = ''
+    uploading.value = false
+    // 显示上传文件模态框
     uploadFileInfoModelOpen.value = true
     message.info("开始计算文件 MD5，请稍候...")
     // 计算文件 MD5
     calculateMD5(file)
-    // // 表单对象
-    // let formData = new FormData()
-    // // 添加 file 字段，并将文件传入 
-    // formData.append('file', file)
 
-    // // 显示上传按钮的 Loading 动画
-    // uploadBtnLoading.value = true
-
-    // uploadMarkdownFile(formData).then((res) => {
-    //     // 响参失败，提示错误消息
-    //     if (!res.data.success) {
-    //       message.warning(res.data.message)
-    //       return
-    //     }
-
-    //     message.success('上传成功')
-
-    //     // 重新渲染列表数据
-    //     renderTableData(1, pageSize.value)
-    // }).finally(() => {
-    //   // 隐藏上传按钮的 Loading 动画
-    //   uploadBtnLoading.value = false
-    // })
   }
+  event.target.value = '' // 重置文件输入框的值，以便下次选择同一文件时也能触发 change 事件
 }
 
 // 是否展示 “删除 Markdown 文件” 确认框
@@ -640,6 +645,117 @@ const calculateMD5 = (file) => {
   // 开始读取第一分片的数据
   loadNext()
 }
+// 是否正在上传中
+const uploading = ref(false)
+// 上传进度
+const uploadProgress = ref(0)
+// 展示状态进度信息
+const statusText = ref('')
+// 上传状态
+const uploadStatus = ref('active')
+// 开始上传
+const startUpload = async () => {
+  // 判断上传文件是否为空，以及 md5 是否计算完成
+  if (!selectedFile.value || !fileMd5.value) return
+  
+  // 设置正在上传中...
+  uploading.value = true
+  // 重置进度为 0
+  uploadProgress.value = 0
+  uploadStatus.value = 'active'
+  try {
+    // 计算总分片数
+    const totalChunks = Math.ceil(selectedFile.value.size / CHUNK_SIZE)
+    // 1. 检查文件是否存在（秒传）
+    statusText.value = '检查文件是否已存在...'
+    const checkResponse = await checkFile(fileMd5.value)
+
+    // 秒传成功
+    if (checkResponse.data.success && checkResponse.data.data.exists && !checkResponse.data.data.needUpload) {
+      uploadProgress.value = 100
+      uploadStatus.value = 'success'
+      statusText.value = '文件已存在，秒传成功！'
+      uploading.value = false
+      return
+    }
+    
+    // 2. 上传分片
+    const uploadedChunks = []
+    if(checkResponse.data.success && checkResponse.data.data.exists && checkResponse.data.data.needUpload) {
+      // 获取已上传的分片序号
+      uploadedChunks = checkResponse.data.data.uploadedChunks
+      // // 获取已上传分片列表
+      // uploadedChunks.push(...checkResponse.data.data.uploadedChunks)
+    }
+    statusText.value = `开始上传分片... (已上传: ${uploadedChunks.length}/${totalChunks})`
+    // 已上传分片数
+    let uploadedCount = uploadedChunks.length
+    // 轮询上传每个分片
+    for (let i = 0; i < totalChunks; i++) {
+      if(uploadedChunks.includes(i)) {
+        // 跳过已上传的分片
+        continue
+      }
+      // 计算当前分片的开始位置
+      const start = i * CHUNK_SIZE
+      // 计算当前分片的结束位置
+      const end = Math.min(start + CHUNK_SIZE, selectedFile.value.size)
+      // 从原始文件切割当前分片
+      const chunk = selectedFile.value.slice(start, end)
+      
+      // 构建表单对象
+      const formData = new FormData()
+      formData.append('chunk', chunk)
+      formData.append('fileMd5', fileMd5.value)
+      formData.append('fileName', selectedFile.value.name)
+      formData.append('fileSize', selectedFile.value.size)
+      formData.append('chunkNumber', i)
+      formData.append('totalChunks', totalChunks)
+      
+      // 上传当前分片
+      await uploadFileChunk(formData)
+
+      // 已上传分片数+1
+      uploadedCount++
+      // 计算当前上传进度
+      uploadProgress.value = Math.floor((uploadedCount / totalChunks) * 100)
+      statusText.value = `上传中... ${uploadedCount}/${totalChunks} 分片`
+    }
+    // 3. 合并分片
+    statusText.value = '正在合并文件...'
+    // 调用后端文件合并接口，设置超时时间为 2 分钟（120000 毫秒）
+    await mergeFileChunk(fileMd5.value, 120000)
+
+    // 设置上传进度为 100%
+    uploadProgress.value = 100
+    // 展示成功提示
+    uploadStatus.value = 'success'
+    statusText.value = '上传完成！'
+    message.success('文件上传成功！')
+    // 重新渲染列表数据
+    renderTableData(1, pageSize.value)
+
+    
+  } catch (error) {
+    console.error('上传失败:', error)
+    statusText.value = '上传失败: ' + (error.response?.data?.message || error.message)
+    message.error('上传失败: ' + (error.response?.data?.message || error.message))
+    uploadStatus.value = 'exception'
+  } finally {
+    // 设置上传完毕
+    uploading.value = false
+  }
+}
+// 计算提示类型
+const alertType = computed(() => {
+  // 错误状态
+  if (uploadStatus.value === 'exception') return 'error'
+  // 成功状态（只有明确标记为 success 才显示绿色）
+  if (uploadStatus.value === 'success') return 'success'
+  // 其他状态（上传中、合并中等）显示蓝色信息提示
+  return 'info'
+})
+
 
 </script>
 
