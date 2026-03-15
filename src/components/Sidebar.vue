@@ -19,7 +19,7 @@
       <!-- 其他工具入口 -->
       <ul class="px-3 text-gray-600 mb-2">
         <li class="flex items-center py-1 px-2 hover:bg-gray-100 rounded-lg cursor-pointer" @click="jumpToCustomerServiceChatPage">
-          <SvgIcon name="customer-service" customCss="w-5 h-5 mr-2 inline mb-0" />
+          <SvgIcon name="customer-service-logo" customCss="w-5 h-5 mr-2 inline mb-0" />
           <span>智能客服</span>
         </li>
       </ul>
