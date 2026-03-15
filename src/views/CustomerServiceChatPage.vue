@@ -261,7 +261,7 @@ const chatMessage = ref(history.state?.firstMessage || '')
 const chatContainer = ref(null)
 
 // 聊天记录，默认给一个欢迎语
-const chatList = ref([{ role: 'assistant', content: '你好呀！我是 “犬小哈项目实战专栏” 的 AI 智能客服，基于 Spring AI 开发，欢迎向我咨询项目相关问题哈 😁', loading: false }])
+const chatList = ref([{ role: 'assistant', content: '你好呀！我是你的专属 AI 智能客服，基于 Spring AI 开发，欢迎向我咨询项目相关问题哈 😁', loading: false }])
 
 // 对话 ID
 const chatId = ref(null)
